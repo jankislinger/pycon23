@@ -7,3 +7,5 @@ pandoc presentation.md \
   -t revealjs \
   -o presentation.html \
   -V revealjs-url=${CDN}
+
+echo "Open file in browser: file://$(pwd)/presentation.html"
