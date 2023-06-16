@@ -218,13 +218,98 @@ def test_reading_data():
 
 ---
 
-# Separate layers
+# Separation layer between Airflow and own implementation
 
-- DAG
+- DAG code
   - Communicates with airflow database
   - Uses airflow library
   - Collects variables and connections
-- Custom code
+- Implementation code
   - Has no clue that airflow exists
   - Everything is typed using protocol classes and dataclasses
 
+
+--- 
+
+# Implementation code
+
+```python
+@dataclass
+class TrainingParams:
+    period: datetime.timedelta
+    learning_rate: float
+    num_epochs: int
+
+def model_training(
+    params: TrainingParams,
+    db: PostgresHookProtocol,
+    fs: FSHookProtocol,
+):
+    data = get_data(db, params.period)
+    model = train_model(data, params.learning_rate, params.num_epochs)
+    upload_model(model, fs)
+```
+
+---
+
+# DAG code - Separation Layer
+
+```python
+def model_training_callable():
+    model_training(
+        params=TrainingParams.from_variable("training_params"),
+        db=PostgresHook("feature_store"),
+        fs=FSHook("s3_bucket_models"),
+    )
+
+model_training = PythonOperator(
+    task_id="model_training",
+    callable=model_training_callable,
+    dag=dag,
+)
+```
+
+---
+
+# Mock resources
+
+```python
+import tempfile
+
+
+class PostgresHookMock:
+
+    def __init__(self):
+        self.conn = sqlite3.connect(":memory:")
+        mock_features().to_sql(self.conn, "features")
+        mock_users().to_sql(self.conn, "users")
+
+    def get_conn(self):
+        return self.conn
+
+
+class FSHookMock:
+
+    def __init__(self):
+        self.base = tempfile.mkdtemp()
+        
+    def get_path(self):
+        return self.base
+```
+
+---
+
+# Test
+
+```python
+def test_model_training():
+    params=TrainingParams(
+        period=timedelta(days=3),
+        learning_rate=1e-3,
+        num_epochs=1,
+    )
+    db=PostgresHookMock()
+    fs=FSHookMock()
+    model_training(params, db, fs)
+    assert os.path.exists(os.path.join(fs.get_path(), "model.hdf"))
+```
