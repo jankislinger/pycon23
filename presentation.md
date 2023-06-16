@@ -244,10 +244,11 @@ def model_training(
     params: TrainingParams,
     db: PostgresHookProtocol,
     fs: FSHookProtocol,
+    date: datetime.date,
 ):
-    data = get_data(db, params.period)
+    data = get_data(db, date, params.period)
     model = train_model(data, params.learning_rate, params.num_epochs)
-    upload_model(model, fs)
+    upload_model(model, fs, date)
 ```
 
 ---
@@ -255,11 +256,16 @@ def model_training(
 # DAG code - Separation Layer
 
 ```python
-def model_training_callable():
+def model_training_callable(dag_run):
+    from airflow.hooks.filesystem import FSHook
+    from airflow.hooks.postgres import PostgresHook
+    from src.model_training import model_training, TrainingParams
+    
     model_training(
         params=TrainingParams.from_variable("training_params"),
         db=PostgresHook("feature_store"),
         fs=FSHook("s3_bucket_models"),
+        date=dag_run.logical_date.date()
     )
 
 model_training = PythonOperator(
@@ -274,11 +280,7 @@ model_training = PythonOperator(
 # Mock resources
 
 ```python
-import tempfile
-
-
 class PostgresHookMock:
-
     def __init__(self):
         self.conn = sqlite3.connect(":memory:")
         mock_features().to_sql(self.conn, "features")
@@ -289,7 +291,6 @@ class PostgresHookMock:
 
 
 class FSHookMock:
-
     def __init__(self):
         self.base = tempfile.mkdtemp()
         
@@ -303,13 +304,14 @@ class FSHookMock:
 
 ```python
 def test_model_training():
-    params=TrainingParams(
-        period=timedelta(days=3),
+    params = TrainingParams(
+        period=datetime.timedelta(days=3),
         learning_rate=1e-3,
         num_epochs=1,
     )
-    db=PostgresHookMock()
-    fs=FSHookMock()
-    model_training(params, db, fs)
-    assert os.path.exists(os.path.join(fs.get_path(), "model.hdf"))
+    db = PostgresHookMock()
+    fs = FSHookMock()
+    date = datetime.date(2023, 9, 15)
+    model_training(params, db, fs, date)
+    assert os.path.exists(os.path.join(fs.get_path(), "model_2023-09-15.hdf"))
 ```
